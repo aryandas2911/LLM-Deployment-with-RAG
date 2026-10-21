@@ -1,0 +1,38 @@
+# --- Virtual environments ---
+.venv/
+venv/
+env/
+ENV/
+
+# --- Secrets and credentials ---
+.env
+.env.*
+!.env.example
+.streamlit/secrets.toml
+kaggle.json
+*.pem
+*.key
+
+# --- Python caches and build output ---
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+*.egg-info/
+build/
+dist/
+
+# --- Jupyter / notebook checkpoints ---
+.ipynb_checkpoints/
+*.nbconvert.ipynb
+
+# --- Local data, models, uploads, and logs ---
+data/
+models/
+uploads/
+*.log
+
+# --- OS files ---
+.DS_Store
+Thumbs.db
