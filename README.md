@@ -6,19 +6,15 @@ A beginner-friendly project that serves a small open-source LLM on a free Kaggle
 
 ```text
 Kaggle Notebook (free GPU)
-  Qwen2.5-1.5B-Instruct + vLLM
-              |
-              | OpenAI-compatible HTTP API (loopback only; no Kaggle tunnel)
-              v
+  Qwen2.5-1.5B-Instruct + vLLM on 127.0.0.1:8000
+  Loopback only; not reachable from Windows; no tunnel
+
 Local machine
-  Streamlit UI  ->  FastAPI backend  ->  LangChain RAG chain
-                                             |            |
-                                             v            v
-                                  Sentence Transformers  Pinecone
-                                     (embeddings)      (vector DB)
-                                             ^
-                                             |
-                                     PyMuPDF (PDF text)
+  Streamlit UI (next task)  ->  FastAPI backend on 127.0.0.1:8001
+                                      |
+                                      |-- retrieval -> Sentence Transformers -> Pinecone
+                                      |
+                                      `-- generation -> permitted reachable vLLM endpoint
 ```
 
 | Part | Tool | Where it runs |
@@ -30,7 +26,9 @@ Local machine
 | Vector database | Pinecone | Cloud |
 | PDF parsing | PyMuPDF | Local |
 | Backend | FastAPI | Local |
-| Frontend | Streamlit | Local |
+| Frontend | Streamlit | Local (next task) |
+
+Retrieval mode works locally without an LLM. Generation mode requires a permitted, reachable endpoint configured through `VLLM_API_BASE_URL` and `VLLM_API_KEY`; it never uses a Kaggle loopback URL as a local shortcut.
 
 ## Repository layout
 
@@ -41,12 +39,14 @@ Local machine
 │   └── test_rag_integration.ipynb  # End-to-end RAG test, uploaded manually
 ├── backend/
 │   ├── __init__.py        # Local backend package
+│   ├── main.py            # FastAPI health, upload, and chat endpoints
 │   ├── pdf_processor.py   # PDF text extraction and chunking
 │   ├── embeddings.py      # Local CPU text embeddings
 │   ├── vector_store.py    # Pinecone index, upload, and search
 │   └── rag_pipeline.py    # Retrieval, prompt construction, generation
 ├── frontend/              # Streamlit app (comes later)
 ├── tests/
+│   ├── test_api.py        # Mocked FastAPI endpoint tests
 │   ├── test_remote_llm.py # Authenticated client for a future HTTPS endpoint
 │   ├── test_pdf_processor.py  # Manual PDF extraction/chunking check
 │   ├── test_embeddings.py     # Embedding and similarity demo
@@ -65,7 +65,8 @@ Local machine
 3. Task 4 starts vLLM on `127.0.0.1:8000` and tests the API inside Kaggle.
 4. Task 5 adds API-key authentication. Kaggle does not permit tunneling or public API hosting, so **no public URL is created**.
 5. Task 9 adds `kaggle/test_rag_integration.ipynb`, a separate notebook that tests the RAG flow against a loopback vLLM server in its own Kaggle session. It does not replace `llm_server.ipynb`.
-6. `tests/test_remote_llm.py` is ready for a future permitted HTTPS endpoint. It is currently untested against any remote endpoint.
+6. Task 10 adds the local FastAPI backend. Its retrieval mode works now; generation mode stays disabled unless a permitted, reachable endpoint is configured.
+7. `tests/test_remote_llm.py` is ready for a future permitted HTTPS endpoint. It is currently untested against any remote endpoint.
 
 vLLM is installed only inside Kaggle. It is deliberately excluded from `requirements.txt` because the local machine does not need it (and may not have a compatible GPU/CUDA setup).
 
@@ -100,6 +101,9 @@ py -3.12 -m json.tool kaggle\test_rag_integration.ipynb > $null
 
 # Dependencies import correctly (after installing them)
 python -c "import fastapi, streamlit, langchain, langchain_openai, pinecone, dotenv, pymupdf, sentence_transformers, torch, numpy; print('OK')"
+
+# FastAPI endpoint tests (mocked; no Pinecone or LLM required)
+python -m pytest tests\test_api.py -q
 ```
 
 Then open both notebooks in `kaggle\` in VS Code and confirm the cells render. Do not run the GPU/vLLM cells locally.
@@ -419,6 +423,166 @@ For each question, check all of these:
 
 The RAG functions and prompt construction were checked with mocked Pinecone/LLM objects in this development environment. A live Pinecone retrieval could not be run without `PINECONE_API_KEY`, and the Kaggle GPU/vLLM notebook has not been executed here. Run the two commands/tests above to validate the live paths.
 
+## Local FastAPI backend
+
+`backend/main.py` exposes a local HTTP API for uploading PDFs and asking questions about the indexed document.
+
+FastAPI is a Python web framework for building HTTP APIs. An **HTTP endpoint** is a method plus a URL path, such as `GET /health` or `POST /chat`. The client sends a request, and the endpoint returns a response. **JSON** is a text format for structured data; the API uses JSON objects so a browser, Swagger UI, a script, or the future Streamlit app can read the same response.
+
+| Method | Path | Purpose |
+| --- | --- | --- |
+| `GET` | `/health` | Check that the API process is running |
+| `POST` | `/upload` | Validate, extract, embed, and store a PDF |
+| `POST` | `/chat` | Retrieve chunks, optionally with LLM generation |
+
+### Start the API
+
+```powershell
+.\.venv\Scripts\Activate.ps1
+uvicorn backend.main:app --reload --port 8001
+```
+
+Keep the terminal open while using the API. Port `8001` avoids confusion with the Kaggle vLLM port `8000`, which is not available from Windows anyway.
+
+Open these URLs:
+
+- <http://127.0.0.1:8001/health> returns `{"status":"ok"}`.
+- <http://127.0.0.1:8001/docs> opens FastAPI's interactive **Swagger UI**.
+
+Swagger UI is generated from the endpoint definitions. It lists each route, shows request and response schemas, and provides **Try it out** buttons for sending real requests.
+
+The API is local only. Do not deploy it publicly, do not expose it with a tunnel, and do not use it to bypass Kaggle's networking rules.
+
+### Upload a PDF through Swagger UI
+
+1. Start the API and open <http://127.0.0.1:8001/docs>.
+2. Expand `POST /upload` and click **Try it out**.
+3. Choose a PDF file. The maximum size is **10 MB**.
+4. Click **Execute**.
+5. Check the JSON response and the Pinecone namespace in the dashboard.
+
+Example success response:
+
+```json
+{
+  "filename": "sample.pdf",
+  "pages_processed": 3,
+  "chunks_created": 8,
+  "vectors_uploaded": 8,
+  "message": "PDF processed and stored in Pinecone successfully."
+}
+```
+
+`pages_processed` counts pages that contained extractable text. Scanned image-only pages are skipped; OCR is outside this project.
+
+The upload is read in 1 MB chunks and rejected as soon as it crosses 10 MB, so the API does not load an unlimited file into memory. The bytes are saved under a safe temporary filename, processed through the existing `pdf_processor`, `embeddings`, and `vector_store` modules, and deleted in a `finally` block. The original filename is written back into document metadata so Pinecone citations do not show the temporary name.
+
+Upload errors return a JSON error such as:
+
+```json
+{"detail": "PDF is too large. The maximum upload size is 10 MB."}
+```
+
+The API logs technical details on the server but never returns a Python stack trace to the client.
+
+### Test retrieval with `/chat`
+
+Expand `POST /chat` in Swagger UI, click **Try it out**, and use:
+
+```json
+{
+  "question": "What is machine learning?",
+  "top_k": 3,
+  "generate": false
+}
+```
+
+Example retrieval response:
+
+```json
+{
+  "question": "What is machine learning?",
+  "generate": false,
+  "answer": null,
+  "sources": [
+    {
+      "text": "Machine learning is a field of artificial intelligence.",
+      "source": "sample.pdf",
+      "page": 2,
+      "score": 0.7432
+    }
+  ]
+}
+```
+
+Retrieval mode works locally with Pinecone. It does **not** call the LLM, so no vLLM endpoint is needed. Validate that `top_k` is from 1 to 10 and the question is not blank; invalid values return HTTP 400.
+
+### Test generation mode
+
+Generation mode uses the same RAG pipeline as Task 9. It requires all of these:
+
+- a permitted, reachable vLLM-compatible endpoint;
+- `VLLM_API_BASE_URL` and `VLLM_API_KEY` set in `.env`;
+- a populated Pinecone index.
+
+```json
+{
+  "question": "What is machine learning?",
+  "top_k": 3,
+  "generate": true
+}
+```
+
+Example generation response:
+
+```json
+{
+  "question": "What is machine learning?",
+  "generate": true,
+  "answer": "Machine learning is a field of artificial intelligence that learns patterns from data.",
+  "sources": [
+    {
+      "source": "sample.pdf",
+      "page": 2,
+      "score": 0.7432
+    }
+  ]
+}
+```
+
+If no real endpoint is configured, generation returns HTTP 503 and explains that `VLLM_API_BASE_URL` and `VLLM_API_KEY` are required. It does not silently switch to Groq, OpenAI, or another provider, and it does not hardcode credentials.
+
+| Mode | Pinecone | LLM endpoint | Result |
+| --- | --- | --- | --- |
+| Retrieval | Required | Not used | Chunk text plus source metadata |
+| Generation | Required | Required and reachable | Generated answer plus sources |
+
+### Why Kaggle cannot be accessed directly
+
+The Kaggle vLLM server binds to `127.0.0.1` inside the Kaggle container. That loopback address means "the same Kaggle machine," not the Windows PC. Kaggle does not provide a public inbound route, and tunneling is prohibited. The local API therefore cannot call the Kaggle server, and this project does not create a tunnel. Generation mode remains unavailable locally until a separate permitted endpoint is configured.
+
+### Run the API tests
+
+```powershell
+.\.venv\Scripts\Activate.ps1
+python -m pytest tests\test_api.py -q
+```
+
+The tests use FastAPI's `TestClient` and mocks for Pinecone, the LLM, PDF extraction, embeddings, and vector storage. Mocking is useful because tests can verify routing, validation, status codes, and response shapes quickly and deterministically without API keys, a populated Pinecone index, network access, a GPU, or a running vLLM server. Mocks do not prove that live services work; the manual Swagger and Pinecone tests cover those paths.
+
+### Common backend errors
+
+- `ModuleNotFoundError: No module named 'fastapi'` or `uvicorn`: activate `.venv` and install `requirements.txt`.
+- `Form data requires "python-multipart"`: install the dependencies again; file uploads need `python-multipart`.
+- `PINECONE_API_KEY is missing` or HTTP 503 from retrieval/upload: create `.env` from `.env.example` and set a real Pinecone key.
+- HTTP 400 on upload: use a valid, unencrypted PDF with a `.pdf` extension and extractable text.
+- HTTP 413 on upload: the file is larger than 10 MB; reduce it or split it.
+- HTTP 503 when `generate=true`: no permitted LLM endpoint is configured; use retrieval mode or configure a reachable endpoint.
+- HTTP 503 "Could not reach the configured LLM endpoint": the endpoint is stopped, blocked, or not permitted from this machine. A Kaggle loopback URL will not work.
+- HTTP 504: the LLM or Pinecone request timed out; wait, check the service, or retry with a smaller `top_k`.
+- HTTP 502: the upstream LLM returned an error; inspect its server log and confirm it serves `Qwen/Qwen2.5-1.5B-Instruct`.
+- Port already in use: stop the other process or choose another local port, such as `8002`.
+
 ## Current status
 
-Tasks 1-9 are complete. The project now has PDF extraction, chunking, embeddings, Pinecone upload/search, RAG retrieval, prompt construction, and end-to-end generation logic. FastAPI endpoints and the Streamlit UI are not implemented yet. The original Kaggle deployment notebook remains unchanged.
+Tasks 1-10 are complete. The project now has PDF extraction, chunking, embeddings, Pinecone upload/search, RAG retrieval, prompt construction, generation logic, and a local FastAPI backend with retrieval-only and generation modes. The Streamlit UI is not implemented yet. The backend is not publicly deployed, no tunnel is used, and the original Kaggle deployment notebook remains unchanged.
