@@ -1,1 +1,1 @@
-"""Local FastAPI backend package. Endpoints will be added in a later task."""
+"""Local backend package for PDF processing, RAG, and future API endpoints."""

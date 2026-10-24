@@ -20,6 +20,7 @@ requests>=2.32.0,<3.0          # Calls the local FastAPI backend
 
 # --- RAG (LangChain) ---
 langchain>=0.3.0,<0.4
+langchain-core>=0.3.0,<0.4     # Document objects used by the PDF processor
 langchain-community>=0.3.0,<0.4
 langchain-openai>=0.2.0,<0.4   # OpenAI-compatible client used with vLLM
 langchain-text-splitters>=0.3.0,<0.4

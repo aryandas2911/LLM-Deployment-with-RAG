@@ -39,10 +39,12 @@ Local machine
 ├── kaggle/
 │   └── llm_server.ipynb   # GPU server notebook, uploaded to Kaggle manually
 ├── backend/
-│   └── __init__.py        # FastAPI backend package (endpoints come later)
+│   ├── __init__.py        # Local backend package
+│   └── pdf_processor.py   # PDF text extraction and chunking
 ├── frontend/              # Streamlit app (comes later)
 ├── tests/
-│   └── test_remote_llm.py # Authenticated client for a future HTTPS endpoint
+│   ├── test_remote_llm.py # Authenticated client for a future HTTPS endpoint
+│   └── test_pdf_processor.py  # Manual PDF extraction/chunking check
 ├── requirements.txt       # Local dependencies only
 ├── .env.example           # Template for Pinecone and vLLM settings
 ├── .gitignore
@@ -88,7 +90,7 @@ Copy-Item .env.example .env
 py -3.12 -m json.tool kaggle\llm_server.ipynb > $null
 
 # Dependencies import correctly (after installing them)
-python -c "import fastapi, streamlit, langchain, pinecone, fitz, sentence_transformers; print('OK')"
+python -c "import fastapi, streamlit, langchain, pinecone, pymupdf, sentence_transformers; print('OK')"
 ```
 
 Then open `kaggle\llm_server.ipynb` in VS Code and confirm the notebook cells render.
@@ -99,6 +101,45 @@ Kaggle tunneling is prohibited, and Cloudflare Quick Tunnel is unauthenticated b
 
 `tests/test_remote_llm.py` is a reusable client for a future permitted HTTPS endpoint. It validates HTTPS, reads `VLLM_API_BASE_URL` and `VLLM_API_KEY` from `.env`, and handles authentication, timeout, and connection failures. It has **not** been run against Kaggle or any remote endpoint.
 
+## PDF processing and chunking
+
+`backend/pdf_processor.py` implements the first local RAG stage:
+
+- `extract_pdf_text(pdf_path)` uses PyMuPDF to extract the text layer from each PDF page. It returns one LangChain `Document` per nonempty page, with `source` (the PDF filename) and `page` (starting at 1) metadata.
+- `split_documents(documents, chunk_size=500, chunk_overlap=100)` uses LangChain's `RecursiveCharacterTextSplitter` to create smaller overlapping chunks. Every chunk keeps the original source and page metadata.
+
+`chunk_size` is the maximum chunk length in **characters**, not model tokens. `chunk_overlap` is the number of characters repeated between neighboring chunks. Overlap helps preserve sentences or ideas that cross a chunk boundary.
+
+Scanned PDFs without a text layer may need OCR. OCR is outside this mini-project's scope.
+
+Run the manual test from the project root:
+
+```powershell
+.\.venv\Scripts\Activate.ps1
+python tests\test_pdf_processor.py "C:\path\to\your\sample.pdf"
+```
+
+Expected output looks like:
+
+```text
+Pages with extractable text: 3
+Generated chunks: 8
+
+First chunks:
+
+Chunk 1
+  Source: sample.pdf
+  Page: 1
+  Preview: The first page text starts here...
+
+Chunk 2
+  Source: sample.pdf
+  Page: 1
+  Preview: ...
+
+All chunks retain source and page metadata.
+```
+
 ## Current status
 
-Tasks 1-4 are complete. Task 5 adds API-key authentication, local authentication tests inside Kaggle, and a prepared remote client. Remote access is intentionally not configured because of Kaggle's platform restrictions. The FastAPI backend, Streamlit UI, RAG pipeline, and Pinecone integration are not implemented yet.
+Tasks 1-5 are complete. Task 6 adds local PDF text extraction and chunking. Embeddings, Pinecone, the RAG chain, FastAPI endpoints, and the Streamlit UI are not implemented yet. The Kaggle notebook is unchanged.
