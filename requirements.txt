@@ -15,7 +15,7 @@ python-multipart>=0.0.9,<1.0   # Form/file uploads for the PDF endpoint
 python-dotenv>=1.0.0,<2.0      # Loads settings from the local .env file
 
 # --- Frontend (Streamlit) ---
-streamlit>=1.39.0,<2.0
+streamlit>=1.57.0,<2.0         # AppTest and current widget APIs used by the frontend
 requests>=2.32.0,<3.0          # Calls the local FastAPI backend
 
 # --- RAG (LangChain) ---

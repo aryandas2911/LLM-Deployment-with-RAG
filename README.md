@@ -10,11 +10,11 @@ Kaggle Notebook (free GPU)
   Loopback only; not reachable from Windows; no tunnel
 
 Local machine
-  Streamlit UI (next task)  ->  FastAPI backend on 127.0.0.1:8001
-                                      |
-                                      |-- retrieval -> Sentence Transformers -> Pinecone
-                                      |
-                                      `-- generation -> permitted reachable vLLM endpoint
+  Streamlit UI on 127.0.0.1:8501  ->  FastAPI backend on 127.0.0.1:8001
+                                            |
+                                            |-- retrieval -> Sentence Transformers -> Pinecone
+                                            |
+                                            `-- generation -> permitted reachable vLLM endpoint
 ```
 
 | Part | Tool | Where it runs |
@@ -26,7 +26,7 @@ Local machine
 | Vector database | Pinecone | Cloud |
 | PDF parsing | PyMuPDF | Local |
 | Backend | FastAPI | Local |
-| Frontend | Streamlit | Local (next task) |
+| Frontend | Streamlit | Local |
 
 Retrieval mode works locally without an LLM. Generation mode requires a permitted, reachable endpoint configured through `VLLM_API_BASE_URL` and `VLLM_API_KEY`; it never uses a Kaggle loopback URL as a local shortcut.
 
@@ -44,9 +44,11 @@ Retrieval mode works locally without an LLM. Generation mode requires a permitte
 │   ├── embeddings.py      # Local CPU text embeddings
 │   ├── vector_store.py    # Pinecone index, upload, and search
 │   └── rag_pipeline.py    # Retrieval, prompt construction, generation
-├── frontend/              # Streamlit app (comes later)
+├── frontend/
+│   └── app.py             # Streamlit upload, search, and chat UI
 ├── tests/
 │   ├── test_api.py        # Mocked FastAPI endpoint tests
+│   ├── test_frontend.py   # Mocked Streamlit AppTest coverage
 │   ├── test_remote_llm.py # Authenticated client for a future HTTPS endpoint
 │   ├── test_pdf_processor.py  # Manual PDF extraction/chunking check
 │   ├── test_embeddings.py     # Embedding and similarity demo
@@ -66,7 +68,8 @@ Retrieval mode works locally without an LLM. Generation mode requires a permitte
 4. Task 5 adds API-key authentication. Kaggle does not permit tunneling or public API hosting, so **no public URL is created**.
 5. Task 9 adds `kaggle/test_rag_integration.ipynb`, a separate notebook that tests the RAG flow against a loopback vLLM server in its own Kaggle session. It does not replace `llm_server.ipynb`.
 6. Task 10 adds the local FastAPI backend. Its retrieval mode works now; generation mode stays disabled unless a permitted, reachable endpoint is configured.
-7. `tests/test_remote_llm.py` is ready for a future permitted HTTPS endpoint. It is currently untested against any remote endpoint.
+7. Task 11 adds the local Streamlit frontend. It calls FastAPI over HTTP and does not access Kaggle, Pinecone, or the LLM directly.
+8. `tests/test_remote_llm.py` is ready for a future permitted HTTPS endpoint. It is currently untested against any remote endpoint.
 
 vLLM is installed only inside Kaggle. It is deliberately excluded from `requirements.txt` because the local machine does not need it (and may not have a compatible GPU/CUDA setup).
 
@@ -102,8 +105,8 @@ py -3.12 -m json.tool kaggle\test_rag_integration.ipynb > $null
 # Dependencies import correctly (after installing them)
 python -c "import fastapi, streamlit, langchain, langchain_openai, pinecone, dotenv, pymupdf, sentence_transformers, torch, numpy; print('OK')"
 
-# FastAPI endpoint tests (mocked; no Pinecone or LLM required)
-python -m pytest tests\test_api.py -q
+# FastAPI and Streamlit tests (mocked; no Pinecone or LLM required)
+python -m pytest tests\test_api.py tests\test_frontend.py -q
 ```
 
 Then open both notebooks in `kaggle\` in VS Code and confirm the cells render. Do not run the GPU/vLLM cells locally.
@@ -427,7 +430,7 @@ The RAG functions and prompt construction were checked with mocked Pinecone/LLM 
 
 `backend/main.py` exposes a local HTTP API for uploading PDFs and asking questions about the indexed document.
 
-FastAPI is a Python web framework for building HTTP APIs. An **HTTP endpoint** is a method plus a URL path, such as `GET /health` or `POST /chat`. The client sends a request, and the endpoint returns a response. **JSON** is a text format for structured data; the API uses JSON objects so a browser, Swagger UI, a script, or the future Streamlit app can read the same response.
+FastAPI is a Python web framework for building HTTP APIs. An **HTTP endpoint** is a method plus a URL path, such as `GET /health` or `POST /chat`. The client sends a request, and the endpoint returns a response. **JSON** is a text format for structured data; the API uses JSON objects so a browser, Swagger UI, a script, or the Streamlit app can read the same response.
 
 | Method | Path | Purpose |
 | --- | --- | --- |
@@ -583,6 +586,93 @@ The tests use FastAPI's `TestClient` and mocks for Pinecone, the LLM, PDF extrac
 - HTTP 502: the upstream LLM returned an error; inspect its server log and confirm it serves `Qwen/Qwen2.5-1.5B-Instruct`.
 - Port already in use: stop the other process or choose another local port, such as `8002`.
 
+## Local Streamlit frontend
+
+`frontend/app.py` is the local browser interface. It uses `requests` to call the FastAPI endpoints; it does **not** import the PDF, embedding, Pinecone, or LLM code directly. This keeps all document processing in one backend and lets Swagger UI and Streamlit return the same response shapes.
+
+The UI provides:
+
+- a sidebar PDF uploader with the same **10 MB** limit;
+- upload progress, success or error messages, and pages/chunks/vectors statistics;
+- a FastAPI health indicator that does not claim the LLM is available;
+- session-only chat history;
+- a **Document Search** mode that shows retrieved chunks, filenames, pages, and scores;
+- an optional **AI Answer** mode that asks FastAPI for generation;
+- clear handling for missing backends, invalid responses, timeouts, and HTTP 503.
+
+### Start both local services
+
+Use two PowerShell terminals from the project root. Activate `.venv` in each one.
+
+Terminal 1, the backend:
+
+```powershell
+uvicorn backend.main:app --reload --port 8001
+```
+
+Terminal 2, the frontend:
+
+```powershell
+streamlit run frontend\app.py
+```
+
+Streamlit normally opens <http://127.0.0.1:8501> automatically. If it does not, open that URL manually. Keep the backend terminal open while using the UI.
+
+The frontend reads `FASTAPI_BASE_URL` from `.env` and defaults to `http://127.0.0.1:8001` when the variable is absent:
+
+```env
+FASTAPI_BASE_URL=http://127.0.0.1:8001
+```
+
+Restart Streamlit after changing `.env`. Do not expose either local service with a tunnel; the frontend must not reach the Kaggle loopback server by a shortcut.
+
+### Use the app
+
+1. Confirm the sidebar says **Backend connected**.
+2. Choose a text-based PDF and click **Upload PDF**.
+3. Check the returned filename and the pages, chunks, and vectors statistics.
+4. Select **Document Search** for retrieval only, or **AI Answer** for retrieval plus generation.
+5. Type a question in the chat box. The answer remains in session history until the browser session ends.
+
+Document Search displays the retrieved evidence inside bordered source cards. The evidence is copied from Pinecone, not generated by a model. AI Answer displays a generated response and a shorter source list.
+
+The same file is not uploaded twice during one session, including after Streamlit reruns. Choosing a different file and clicking **Upload PDF** uploads it. Chat history is not written to disk or Pinecone.
+
+### Frontend modes
+
+| Mode | Backend request | What the user sees |
+| --- | --- | --- |
+| Document Search | `generate=false` | Chunk text plus filename, page, and similarity score |
+| AI Answer | `generate=true` | Generated answer plus source metadata |
+
+The backend health check only proves that FastAPI is running. AI Answer still needs a populated Pinecone index and a permitted, reachable vLLM endpoint. Without the endpoint, the UI shows the backend's HTTP 503 explanation and does not silently switch to another provider.
+
+### Run the frontend tests
+
+```powershell
+.\.venv\Scripts\Activate.ps1
+python -m pytest tests\test_frontend.py -q
+```
+
+The nine frontend tests use Streamlit's `AppTest` and mocked `requests` calls. They check the health indicator, upload statistics, duplicate-upload prevention, invalid responses, empty questions, retrieval sources, session history, AI answers, and the HTTP 503 path. They do not require a running backend, a Pinecone key, a browser, or a GPU. Mocks cannot prove that live Pinecone or LLM calls work; use the app and Swagger UI for those checks.
+
+Run both suites together:
+
+```powershell
+python -m pytest tests\test_api.py tests\test_frontend.py -q
+```
+
+### Common frontend errors
+
+- `streamlit is not recognized`: activate `.venv` and install `requirements.txt`.
+- **Backend unavailable**: start FastAPI on port `8001`, then refresh the browser.
+- Upload succeeds in the sidebar but questions return no chunks: confirm the PDF was uploaded to the expected Pinecone index and wait briefly for indexing.
+- HTTP 503 in AI Answer: configure a permitted endpoint, or use Document Search; a Kaggle loopback URL still will not work from Windows.
+- HTTP 413 or a 10 MB warning: use a smaller PDF or split it.
+- HTTP 400: use a readable, unencrypted PDF with a text layer and a `.pdf` extension.
+- Port `8501` already in use: run `streamlit run frontend\app.py --server.port 8502`.
+- A changed backend URL is ignored: update `.env`, then stop and restart Streamlit.
+
 ## Current status
 
-Tasks 1-10 are complete. The project now has PDF extraction, chunking, embeddings, Pinecone upload/search, RAG retrieval, prompt construction, generation logic, and a local FastAPI backend with retrieval-only and generation modes. The Streamlit UI is not implemented yet. The backend is not publicly deployed, no tunnel is used, and the original Kaggle deployment notebook remains unchanged.
+Tasks 1-11 are complete. The project now has PDF extraction, chunking, embeddings, Pinecone upload/search, RAG retrieval, prompt construction, generation logic, a local FastAPI backend, and a local Streamlit frontend with retrieval-only and AI Answer modes. The frontend calls FastAPI over HTTP and keeps chat history only for the browser session. Neither service is publicly deployed, no tunnel is used, and the original Kaggle deployment notebook remains unchanged.
