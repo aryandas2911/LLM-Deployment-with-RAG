@@ -41,12 +41,14 @@ Local machine
 ├── backend/
 │   ├── __init__.py        # Local backend package
 │   ├── pdf_processor.py   # PDF text extraction and chunking
-│   └── embeddings.py      # Local CPU text embeddings
+│   ├── embeddings.py      # Local CPU text embeddings
+│   └── vector_store.py    # Pinecone index, upload, and search
 ├── frontend/              # Streamlit app (comes later)
 ├── tests/
 │   ├── test_remote_llm.py # Authenticated client for a future HTTPS endpoint
 │   ├── test_pdf_processor.py  # Manual PDF extraction/chunking check
-│   └── test_embeddings.py     # Embedding and similarity demo
+│   ├── test_embeddings.py     # Embedding and similarity demo
+│   └── test_vector_store.py   # Pinecone integration test
 ├── requirements.txt       # Local dependencies only
 ├── .env.example           # Template for Pinecone and vLLM settings
 ├── .gitignore
@@ -65,7 +67,7 @@ vLLM is installed only inside Kaggle. It is deliberately excluded from `requirem
 
 ## Local setup (Windows PowerShell)
 
-Prerequisites: Python 3.11 or 3.12, Git, and a Pinecone account (for a later task).
+Prerequisites: Python 3.11 or 3.12, Git, and a free Pinecone account for the vector database.
 
 ```powershell
 # 1. Create the virtual environment
@@ -92,7 +94,7 @@ Copy-Item .env.example .env
 py -3.12 -m json.tool kaggle\llm_server.ipynb > $null
 
 # Dependencies import correctly (after installing them)
-python -c "import fastapi, streamlit, langchain, pinecone, pymupdf, sentence_transformers, torch, numpy; print('OK')"
+python -c "import fastapi, streamlit, langchain, pinecone, dotenv, pymupdf, sentence_transformers, torch, numpy; print('OK')"
 ```
 
 Then open `kaggle\llm_server.ipynb` in VS Code and confirm the notebook cells render.
@@ -184,6 +186,73 @@ Higher cosine similarity means the chunk is more related to the question.
 Embedding checks passed.
 ```
 
+## Pinecone vector database
+
+Pinecone is a vector database. Instead of storing raw PDF files, it stores each chunk's 384-dimensional embedding plus metadata. A search compares the question vector with stored vectors and returns the closest chunks.
+
+- **Index:** the Pinecone container that defines vector dimension (`384`) and metric (`cosine`). The index name comes from `PINECONE_INDEX_NAME`.
+- **Namespace:** a logical partition inside the index. This project uses `rag-mini-project` for both uploads and searches.
+- **Upsert:** insert a vector, or update it if the same ID already exists.
+- **Metadata:** the chunk text, source filename, and page number. It lets a search result show where the answer came from.
+- **Cosine similarity:** compares vector direction. Higher scores mean the query and chunk are more semantically related.
+- **Semantic search vs keyword search:** keyword search mainly matches literal words; embedding search can match related meaning even when the wording differs.
+
+Vector IDs are stable hashes of source, page, chunk position, and text. Re-uploading the same chunks updates the same records instead of creating duplicates. Source filenames alone are not globally unique, so two different PDFs with identical filenames, pages, positions, and text could collide; this mini-project accepts that small risk.
+
+### Pinecone account and `.env` setup
+
+1. Create a free account at <https://app.pinecone.io>.
+2. Open the Pinecone dashboard and create an API key.
+3. Create your local environment file:
+
+```powershell
+Copy-Item .env.example .env
+```
+
+4. Set these values in `.env`:
+
+```env
+PINECONE_API_KEY=your_real_pinecone_key
+PINECONE_INDEX_NAME=llm-rag-index
+```
+
+`.env` is excluded by `.gitignore`. Never commit it or paste the real key into source code.
+
+The module uses the modern `pinecone` SDK directly, not the deprecated `pinecone-client` package or LangChain's Pinecone wrapper. It creates an AWS `us-east-1` serverless index when needed, waits for readiness, and raises an error instead of deleting an existing index with the wrong dimension or metric.
+
+### Run the Pinecone integration test
+
+```powershell
+.\.venv\Scripts\Activate.ps1
+python tests\test_vector_store.py "C:\path\to\your\sample.pdf"
+```
+
+Expected output looks like:
+
+```text
+Creating Pinecone index 'llm-rag-index'...
+Uploaded 8 vectors to Pinecone namespace 'rag-mini-project'.
+Waiting briefly for Pinecone to make the vectors searchable...
+
+Question: What is machine learning?
+Higher similarity scores mean the chunk is more semantically related.
+
+1. Similarity: 0.7432
+   Source: sample.pdf
+   Page: 2
+   Preview: Machine learning is a field of artificial intelligence...
+
+All returned results contain text, source, page, and score metadata.
+```
+
+The test does **not** delete vectors or indexes. Re-running it upserts the same stable IDs for unchanged chunks; changed chunks receive new IDs, so older vectors may remain in the namespace.
+
+### Verify vectors in Pinecone
+
+Open the Pinecone dashboard, select the `llm-rag-index` index, and inspect its namespaces and vectors. The `rag-mini-project` namespace should show the uploaded vector count and records whose metadata contains `source`, `page`, and `text`.
+
+Pinecone indexing and query visibility are not always instantaneous. Free-tier indexes also have storage and request limits, and network timeouts or rate-limit errors can occur. Wait briefly and retry rather than deleting the index. Do not automatically recreate an existing incompatible index.
+
 ## Current status
 
-Tasks 1-6 are complete. Task 7 adds local CPU text embeddings and a small semantic-similarity demo. Pinecone, the RAG chain, FastAPI endpoints, and the Streamlit UI are not implemented yet. The Kaggle notebook is unchanged.
+Tasks 1-7 are complete. Task 8 adds Pinecone index creation, vector upload, and semantic search. The RAG generation chain, FastAPI endpoints, and Streamlit UI are not implemented yet. The Kaggle notebook is unchanged.
