@@ -11,6 +11,7 @@
 # --- Backend (FastAPI) ---
 fastapi>=0.115.0,<1.0
 uvicorn[standard]>=0.30.0,<1.0
+pydantic>=2.0.0,<3.0            # Request models in backend/main.py
 python-multipart>=0.0.9,<1.0   # Form/file uploads for the PDF endpoint
 python-dotenv>=1.0.0,<2.0      # Loads settings from the local .env file
 
@@ -19,11 +20,10 @@ streamlit>=1.57.0,<2.0         # AppTest and current widget APIs used by the fro
 requests>=2.32.0,<3.0          # Calls the local FastAPI backend
 
 # --- RAG (LangChain) ---
-langchain>=0.3.0,<0.4
-langchain-core>=0.3.0,<0.4     # Document objects used by the PDF processor
-langchain-community>=0.3.0,<0.4
+langchain-core>=0.3.78,<0.4    # Document and prompt objects used by the backend
 langchain-openai>=0.2.0,<0.4   # OpenAI-compatible client used with vLLM
 langchain-text-splitters>=0.3.0,<0.4
+openai>=1.104.2,<3.0           # Exception types imported by backend/rag_pipeline.py
 
 # --- Embeddings ---
 sentence-transformers>=3.0.0,<6.0

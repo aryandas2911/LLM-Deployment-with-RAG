@@ -9,8 +9,10 @@ run without API keys. The mocks replace only the network-facing pieces; request
 validation and response handling still use the real FastAPI application.
 """
 
+import logging
 from pathlib import Path
 
+import pymupdf as fitz
 import pytest
 from fastapi.testclient import TestClient
 from langchain_core.documents import Document
@@ -67,17 +69,70 @@ def test_upload_rejects_invalid_pdf_and_deletes_temp_file(monkeypatch):
     assert not captured["temp_path"].exists()
 
 
-def test_upload_rejects_oversized_file(monkeypatch):
-    # Use a tiny limit so the test does not need to allocate 10 MB.
-    monkeypatch.setattr(main, "MAX_UPLOAD_BYTES", 10)
+def test_upload_enforces_actual_10_mb_limit():
+    assert main.MAX_UPLOAD_BYTES == 10 * 1024 * 1024
 
     response = client.post(
         "/upload",
-        files={"file": ("large.pdf", b"x" * 11, "application/pdf")},
+        files={
+            "file": (
+                "large.pdf",
+                b"x" * (main.MAX_UPLOAD_BYTES + 1),
+                "application/pdf",
+            )
+        },
     )
 
     assert response.status_code == 413
     assert "too large" in response.json()["detail"].lower()
+
+
+def test_upload_valid_pdf_uses_real_extraction_and_deletes_temp_file(monkeypatch):
+    pdf = fitz.open()
+    page = pdf.new_page()
+    page.insert_text((72, 72), "Machine learning learns patterns from data.")
+    pdf_bytes = pdf.tobytes()
+    pdf.close()
+
+    captured = {}
+    real_extract = main.extract_pdf_text
+
+    def capture_path(pdf_path):
+        captured["temp_path"] = Path(pdf_path)
+        return real_extract(pdf_path)
+
+    def fake_embeddings(documents):
+        captured["embedding_documents"] = documents
+        return [[0.0] * 384 for _ in documents]
+
+    def fake_store(documents, embeddings, index):
+        captured["stored_documents"] = documents
+        return len(documents)
+
+    monkeypatch.setattr(main, "extract_pdf_text", capture_path)
+    monkeypatch.setattr(main, "generate_embeddings", fake_embeddings)
+    monkeypatch.setattr(main, "get_pinecone_index", lambda: object())
+    monkeypatch.setattr(main, "store_documents", fake_store)
+
+    response = client.post(
+        "/upload",
+        files={"file": ("sample.pdf", pdf_bytes, "application/pdf")},
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "filename": "sample.pdf",
+        "pages_processed": 1,
+        "chunks_created": 1,
+        "vectors_uploaded": 1,
+        "message": "PDF processed and stored in Pinecone successfully.",
+    }
+    assert captured["temp_path"].suffix == ".pdf"
+    assert captured["stored_documents"][0].metadata == {
+        "source": "sample.pdf",
+        "page": 1,
+    }
+    assert not captured["temp_path"].exists()
 
 
 @pytest.mark.parametrize(
@@ -194,6 +249,31 @@ def test_generation_uses_existing_rag_pipeline(monkeypatch):
     }
     assert response.json()["answer"].startswith("Machine learning")
     assert response.json()["sources"][0]["source"] == "sample.pdf"
+
+
+def test_generation_error_does_not_echo_or_log_api_key(monkeypatch, caplog):
+    secret = "super-secret-test-value"
+
+    monkeypatch.setattr(
+        main,
+        "_get_llm_settings",
+        lambda: ("https://llm.example/v1", secret),
+    )
+
+    def fail_generation(*args, **kwargs):
+        raise RuntimeError(f"upstream failure included {secret}")
+
+    monkeypatch.setattr(main, "generate_answer", fail_generation)
+
+    with caplog.at_level(logging.WARNING):
+        response = client.post(
+            "/chat",
+            json={"question": "What is machine learning?", "generate": True},
+        )
+
+    assert response.status_code == 502
+    assert secret not in response.text
+    assert secret not in caplog.text
 
 
 def test_generation_maps_timeout_to_504(monkeypatch):

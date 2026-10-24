@@ -406,7 +406,7 @@ def chat(request: ChatRequest):
                 ),
             ) from error
 
-        logger.warning("LLM generation failed: %s", error)
+        logger.warning("LLM generation failed")
         raise HTTPException(
             status_code=502,
             detail=(

@@ -31,7 +31,19 @@ dist/
 data/
 models/
 uploads/
+*.pdf
 *.log
+
+# --- Model weights and caches ---
+.cache/
+huggingface/
+*.safetensors
+*.bin
+*.pt
+*.pth
+*.onnx
+*.gguf
+*.ckpt
 
 # --- OS files ---
 .DS_Store
