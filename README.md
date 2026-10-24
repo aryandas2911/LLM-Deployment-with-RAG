@@ -8,7 +8,7 @@ A beginner-friendly project that serves a small open-source LLM on a free Kaggle
 Kaggle Notebook (free GPU)
   Qwen2.5-1.5B-Instruct + vLLM
               |
-              | OpenAI-compatible HTTP API (public URL added later)
+              | OpenAI-compatible HTTP API (loopback only; no Kaggle tunnel)
               v
 Local machine
   Streamlit UI  ->  FastAPI backend  ->  LangChain RAG chain
@@ -41,7 +41,8 @@ Local machine
 ├── backend/
 │   └── __init__.py        # FastAPI backend package (endpoints come later)
 ├── frontend/              # Streamlit app (comes later)
-├── tests/                 # Tests (come later)
+├── tests/
+│   └── test_remote_llm.py # Authenticated client for a future HTTPS endpoint
 ├── requirements.txt       # Local dependencies only
 ├── .env.example           # Template for Pinecone and vLLM settings
 ├── .gitignore
@@ -52,9 +53,9 @@ Local machine
 
 1. `kaggle/llm_server.ipynb` is written locally in VS Code. Open the `kaggle/` folder in VS Code to see it as a notebook.
 2. Upload the `.ipynb` file to Kaggle and run it there with a GPU enabled. Do **not** run the GPU/vLLM cells locally.
-3. In a later task, the notebook will start vLLM and expose it through a temporary public URL.
-4. Copy that URL into your local `.env` as `VLLM_BASE_URL`. The local FastAPI backend then calls the Kaggle-hosted model.
-5. The URL changes every Kaggle session, so it is never hard-coded or committed.
+3. Task 4 starts vLLM on `127.0.0.1:8000` and tests the API inside Kaggle.
+4. Task 5 adds API-key authentication. Kaggle does not permit tunneling or public API hosting, so **no public URL is created**.
+5. `tests/test_remote_llm.py` is ready for a future permitted HTTPS endpoint. It is currently untested against any remote endpoint.
 
 vLLM is installed only inside Kaggle. It is deliberately excluded from `requirements.txt` because the local machine does not need it (and may not have a compatible GPU/CUDA setup).
 
@@ -90,8 +91,14 @@ py -3.12 -m json.tool kaggle\llm_server.ipynb > $null
 python -c "import fastapi, streamlit, langchain, pinecone, fitz, sentence_transformers; print('OK')"
 ```
 
-Then open `kaggle\llm_server.ipynb` in VS Code and confirm the three cells render.
+Then open `kaggle\llm_server.ipynb` in VS Code and confirm the notebook cells render.
+
+## Task 5 remote-access status
+
+Kaggle tunneling is prohibited, and Cloudflare Quick Tunnel is unauthenticated by default. This project therefore does not expose the Kaggle vLLM server. The server stays on `127.0.0.1` and uses a `VLLM_API_KEY` bearer token for `/v1` requests.
+
+`tests/test_remote_llm.py` is a reusable client for a future permitted HTTPS endpoint. It validates HTTPS, reads `VLLM_API_BASE_URL` and `VLLM_API_KEY` from `.env`, and handles authentication, timeout, and connection failures. It has **not** been run against Kaggle or any remote endpoint.
 
 ## Current status
 
-Task 1 only: project scaffolding, notebook placeholder, dependencies, environment template, Git ignore rules, and documentation. The RAG pipeline, FastAPI endpoints, Streamlit UI, Kaggle GPU setup, and vLLM installation are intentionally not implemented yet.
+Tasks 1-4 are complete. Task 5 adds API-key authentication, local authentication tests inside Kaggle, and a prepared remote client. Remote access is intentionally not configured because of Kaggle's platform restrictions. The FastAPI backend, Streamlit UI, RAG pipeline, and Pinecone integration are not implemented yet.
