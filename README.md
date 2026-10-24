@@ -40,11 +40,13 @@ Local machine
 │   └── llm_server.ipynb   # GPU server notebook, uploaded to Kaggle manually
 ├── backend/
 │   ├── __init__.py        # Local backend package
-│   └── pdf_processor.py   # PDF text extraction and chunking
+│   ├── pdf_processor.py   # PDF text extraction and chunking
+│   └── embeddings.py      # Local CPU text embeddings
 ├── frontend/              # Streamlit app (comes later)
 ├── tests/
 │   ├── test_remote_llm.py # Authenticated client for a future HTTPS endpoint
-│   └── test_pdf_processor.py  # Manual PDF extraction/chunking check
+│   ├── test_pdf_processor.py  # Manual PDF extraction/chunking check
+│   └── test_embeddings.py     # Embedding and similarity demo
 ├── requirements.txt       # Local dependencies only
 ├── .env.example           # Template for Pinecone and vLLM settings
 ├── .gitignore
@@ -90,7 +92,7 @@ Copy-Item .env.example .env
 py -3.12 -m json.tool kaggle\llm_server.ipynb > $null
 
 # Dependencies import correctly (after installing them)
-python -c "import fastapi, streamlit, langchain, pinecone, pymupdf, sentence_transformers; print('OK')"
+python -c "import fastapi, streamlit, langchain, pinecone, pymupdf, sentence_transformers, torch, numpy; print('OK')"
 ```
 
 Then open `kaggle\llm_server.ipynb` in VS Code and confirm the notebook cells render.
@@ -140,6 +142,48 @@ Chunk 2
 All chunks retain source and page metadata.
 ```
 
+## Text embeddings
+
+`backend/embeddings.py` converts document chunks into numeric vectors with `sentence-transformers/all-MiniLM-L6-v2` on the CPU.
+
+- The model produces **384-dimensional** vectors. Each dimension is a learned feature; the combination of all 384 values represents the text's meaning.
+- `load_embedding_model()` uses `functools.lru_cache` so the model is loaded once per Python process. The first use may download it from Hugging Face and cache it locally.
+- `generate_embeddings(documents)` extracts each Document's `page_content`, encodes the texts in batches of 32, and returns one list of Python floats per input Document in the same order.
+- Keeping the order is essential: the vector at position `i` must remain paired with the chunk at position `i`, including its source filename and page metadata.
+- The same model must embed both document chunks and user questions. Otherwise their vectors would not be comparable.
+
+The embedding test also includes a small semantic-retrieval demo. It embeds the question "What is machine learning?", computes cosine similarity with NumPy, and prints the three closest chunks. Cosine similarity compares vector direction: a score near 1 means the texts are closely related; a score near 0 means they are mostly unrelated.
+
+This is only an in-memory demonstration. Pinecone will store the vectors and their metadata so larger collections can be searched without loading every vector into local memory.
+
+Run the embedding test:
+
+```powershell
+.\.venv\Scripts\Activate.ps1
+python tests\test_embeddings.py "C:\path\to\your\sample.pdf"
+```
+
+Expected output looks like:
+
+```text
+Embedding model: sentence-transformers/all-MiniLM-L6-v2 (CPU)
+Number of chunks: 8
+Number of embeddings: 8
+Dimension of first embedding: 384
+First 10 values of first embedding: [0.0123, -0.0456, ...]
+
+Semantic similarity demo
+Question: What is machine learning?
+Higher cosine similarity means the chunk is more related to the question.
+
+1. Similarity: 0.6234
+   Source: sample.pdf
+   Page: 2
+   Preview: Machine learning is a field of artificial intelligence...
+
+Embedding checks passed.
+```
+
 ## Current status
 
-Tasks 1-5 are complete. Task 6 adds local PDF text extraction and chunking. Embeddings, Pinecone, the RAG chain, FastAPI endpoints, and the Streamlit UI are not implemented yet. The Kaggle notebook is unchanged.
+Tasks 1-6 are complete. Task 7 adds local CPU text embeddings and a small semantic-similarity demo. Pinecone, the RAG chain, FastAPI endpoints, and the Streamlit UI are not implemented yet. The Kaggle notebook is unchanged.

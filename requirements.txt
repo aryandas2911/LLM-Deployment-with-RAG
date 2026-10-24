@@ -27,6 +27,8 @@ langchain-text-splitters>=0.3.0,<0.4
 
 # --- Embeddings ---
 sentence-transformers>=3.0.0,<6.0
+torch>=2.0.0,<3.0             # CPU inference backend for Sentence Transformers
+numpy>=1.26.0,<3.0            # Cosine similarity calculations
 
 # --- Vector database ---
 pinecone>=5.0.0,<7.0
